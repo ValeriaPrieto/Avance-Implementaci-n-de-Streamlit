@@ -16,7 +16,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, e
 
 def load_dataset():
     # Load your weather dataset from a CSV file
-    df = pd.read_csv('C:/Users/valer/Documents/Machine Learning/Practicas/Bases de datos/DATASET E-COMERCE/Sales Transaction v.4a.csv')
+    df = pd.read_csv('Sales Transaction v.4a2.csv')
     df = df[df['Quantity'] > 0]
     columns = df.select_dtypes(include=['number']).columns
     for col in columns:
@@ -33,7 +33,6 @@ def load_dataset():
     df['CustomerOrderCount'] = df.groupby('CustomerNo')['TransactionNo'].transform('count')
     df['ProductSaleFrequency'] = df.groupby('ProductNo')['Quantity'].transform('count')   
     df['Revenue'] = df['Price']*df['Quantity']
-    df = df.sample(frac=0.1, random_state=42)
     df.reset_index(drop=True, inplace=True)
     return df
 
