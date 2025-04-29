@@ -40,7 +40,7 @@ def get_model(algorithm):
     if algorithm == 'Linear Regression':
         model = LinearRegression()
     elif algorithm == 'Support Vector Regressor':
-        model = SVR(C=25)
+        model = SVR(C=10)
     return model
 
 def build_pipeline(algorithm='Linear Regression'):
