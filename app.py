@@ -6,18 +6,28 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import VotingRegressor
 import matplotlib.pyplot as plt
 import pickle
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, explained_variance_score
 
 def load_dataset():
     # Load your weather dataset from a CSV file
-    df = pd.read_csv('Sales Transaction v.4a2.csv')
+    df = pd.read_csv('C:/Users/valer/Documents/Machine Learning/Practicas/Bases de datos/DATASET E-COMERCE/Sales Transaction v.4a.csv')
     df = df[df['Quantity'] > 0]
+    df['Month'] = pd.to_datetime(df['Date']).dt.month
+    df['DayOfWeek'] = pd.to_datetime(df['Date']).dt.dayofweek
+    df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
+    df['CustomerOrderCount'] = df.groupby('CustomerNo')['TransactionNo'].transform('count')
+    df['ProductSaleFrequency'] = df.groupby('ProductNo')['Quantity'].transform('count')   
+    df['Revenue'] = df['Price']*df['Quantity']
+    df['Country'] = df['Country'].apply(lambda self: 'Other' if self != 'United Kingdom' else self)
     columns = df.select_dtypes(include=['number']).columns
     for col in columns:
             if col in df.columns:
@@ -27,12 +37,8 @@ def load_dataset():
                 lower_bound = Q1 - 1.5 * IQR
                 upper_bound = Q3 + 1.5 * IQR
                 df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
-    df['Month'] = pd.to_datetime(df['Date']).dt.month
-    df['DayOfWeek'] = pd.to_datetime(df['Date']).dt.dayofweek
-    df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
-    df['CustomerOrderCount'] = df.groupby('CustomerNo')['TransactionNo'].transform('count')
-    df['ProductSaleFrequency'] = df.groupby('ProductNo')['Quantity'].transform('count')   
-    df['Revenue'] = df['Price']*df['Quantity']
+    df = df.drop(columns=['CustomerNo', 'ProductNo','TransactionNo'])
+    df = df.sample(n=10000, random_state=42)
     df.reset_index(drop=True, inplace=True)
     return df
 
@@ -40,11 +46,15 @@ def get_model(algorithm):
     if algorithm == 'Linear Regression':
         model = LinearRegression()
     elif algorithm == 'Support Vector Regressor':
-        model = SVR(C=10)
+        model = SVR(C= 1, epsilon= 0.0)
+    elif algorithm == 'Random Forrest':
+        model = RandomForestRegressor( bootstrap= True, max_depth= 20, max_features= 'log2', min_samples_leaf= 4, min_samples_split= 10, n_estimators= 300)
+    elif algorithm == 'Voting':
+        model = VotingRegressor( estimators=[('lr', LinearRegression()), ('rf', RandomForestRegressor(max_depth=15, n_estimators=100)),('svr', SVR(C=10, epsilon=0.1))],weights= (1, 2, 1))
     return model
 
 def build_pipeline(algorithm='Linear Regression'):
-    numerical_cols = ["Month", "IsWeekend", "ProductSaleFrequency","CustomerOrderCount",'Price', 'Quantity']
+    numerical_cols = ["Month", "IsWeekend", "ProductSaleFrequency","CustomerOrderCount",'Price']
     categorical_cols = ["Country"]
     num_pipeline = Pipeline([
         ('imputer', SimpleImputer(strategy="median")),
@@ -67,23 +77,35 @@ def build_pipeline(algorithm='Linear Regression'):
 
 def train_model(df, algorithm='Linear Regression'):
 
-    df["product_sale_frequency_cat"] = pd.cut(df["ProductSaleFrequency"],
-                               bins=[0.,400, 800.,np.inf],
-                               labels=[1, 2,3])
+    df["productsalefrequency_cat"] = pd.cut(df["ProductSaleFrequency"],
+                               bins=[0., 200, 400, 600, 800.,np.inf],
+                               labels=[1, 2, 3, 4, 5])
+    df["customer_order_count_cat"] = pd.cut(df["CustomerOrderCount"],
+                               bins=[0., 200, 400, 600, 800.,np.inf],
+                               labels=[1, 2, 3, 4, 5])
     df["revenue_cat"] = pd.cut(df["Revenue"],
-                               bins=[0.,50, 100.,np.inf],
-                               labels=[1, 2,3])
-    df['stratify_col']= df["IsWeekend"].astype(str)+"_"+df["Month"].astype(str)+"_"+df["product_sale_frequency_cat"].astype(str)+"_"+df["revenue_cat"].astype(str)
-    from sklearn.model_selection import StratifiedShuffleSplit
+                               bins=[0., 50, 100, 150, 200.,np.inf],
+                               labels=[1, 2, 3, 4, 5])
+    df["price_cat"] = pd.cut(df["Price"],
+                               bins=[0., 9, 10.5, 12, 13.5, 15., np.inf],
+                               labels=[1, 2, 3, 4, 5, 6])
+    df['stratify_col']= df["price_cat"].astype(str)+"_"+ df["Month"].astype(str)+"_"+ df["revenue_cat"].astype(str)+"_"+ df["IsWeekend"].astype(str)+"_"+ df["productsalefrequency_cat"].astype(str)+"_"+ df["customer_order_count_cat"].astype(str)    
+    combo_counts = df["stratify_col"].value_counts()
+    valid_combos = combo_counts[combo_counts >= 2].index
+
+    df = df[df["stratify_col"].isin(valid_combos)].copy()
+    df = df.reset_index(drop=True)
     split = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     for train_index, test_index in split.split(df, df["stratify_col"]):
         strat_train_set = df.loc[train_index]  #Conjunto de entrenamiento
         strat_test_set = df.loc[test_index] # Conjunto de prueba
 
     for set_ in (strat_train_set, strat_test_set):
-        set_.drop("product_sale_frequency_cat", axis=1, inplace=True)
+        set_.drop("customer_order_count_cat", axis=1, inplace=True)
         set_.drop("stratify_col", axis=1, inplace=True)
         set_.drop("revenue_cat", axis=1, inplace=True)
+        set_.drop("price_cat", axis=1, inplace=True)
+        set_.drop("productsalefrequency_cat", axis=1, inplace=True)
 
     y_train = strat_train_set["Revenue"].copy()
     X_train = strat_train_set.drop("Revenue", axis=1)
@@ -127,22 +149,24 @@ def evaluate_model(pipeline, X_test, y_test):
     st.write(f'Explained Variance Score: {explained_var:.4f}')
 
     # Display scatter plot and residual plot
-    fig, ax1 = plt.subplots(1, figsize=(8, 4))
-    ax1.scatter(y_test, y_pred, alpha=0.7)
-    ax1.set_title('Real vs. Predicho')
-    ax1.set_xlabel('Real')
-    ax1.set_ylabel('Predicho')
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.scatter(y_test, y_pred, alpha=0.7, color='royalblue', label='Predicciones')
+    ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', label='Ideal (y = x)')
+    ax.set_title('Valores Reales vs. Predichos')
+    ax.set_xlabel('Valor Real')
+    ax.set_ylabel('Valor Predicho')
+    ax.legend()
+    ax.grid(True)
     st.pyplot(fig)
 
 # Function to predict 
-def predict_revenue(model, month, is_weekend, product_sale_frequency, customer_order_count, country, price, quantity):
+def predict_revenue(model, month, is_weekend, product_sale_frequency, customer_order_count, country, price):
     input_data = pd.DataFrame([{
         "Month": month,
         "IsWeekend": is_weekend,
         "ProductSaleFrequency": product_sale_frequency,
         "CustomerOrderCount": customer_order_count,
         "Price": price,
-        "Quantity": quantity,
         "Country": country
     }])
     predicted_revenue = model.predict(input_data)
@@ -157,7 +181,7 @@ def main():
 
     # Select regression algorithm
     algorithm = st.sidebar.selectbox('Seleccionar algortimo',
-                                     ['Linear Regression', 'Support Vector Regressor'])
+                                     ['Linear Regression', 'Support Vector Regressor', 'Random Forrest', 'Voting'])
 
     # Train the model
     model = train_model(df, algorithm)
@@ -177,16 +201,14 @@ def main():
     is_weekend = is_weekend_names[st.sidebar.selectbox('Selecciona si es fin de semana', list(is_weekend_names.keys()))]
     country = st.sidebar.selectbox('Selecciona el pais', df['Country'].unique().tolist())
     product_sale_frequency = st.sidebar.slider('Frecuencia de Venta del Producto', df['ProductSaleFrequency'].min(),
-                                 df['ProductSaleFrequency'].max(), int(df['ProductSaleFrequency'].mean()))
-    customer_order_count = st.sidebar.slider('Frecuencia de Compra del Cliente', df['CustomerOrderCount'].min(),
-                                     df['CustomerOrderCount'].max(), int(df['CustomerOrderCount'].mean()))
+                                 df['ProductSaleFrequency'].max(), int(df['ProductSaleFrequency'].mode()[0]))
+    customer_order_count = st.sidebar.slider('Frecuencia de Compra del Cliente', int(df['CustomerOrderCount'].min()),
+                                     int(df['CustomerOrderCount'].max()), int(df['CustomerOrderCount'].mode()[0]))
     price = st.sidebar.slider('Precio', df['Price'].min(),
-                                     df['Price'].max(), df['Price'].mean())
-    quantity = st.sidebar.slider('Cantidad', df['Quantity'].min(),
-                                     df['Quantity'].max(), int(df['Quantity'].mean()))
+                                     df['Price'].max(), df['Price'].mode()[0])
     # Predict
     if st.sidebar.button('Predecir'):
-        predicted_revenue = predict_revenue(model, month, is_weekend,product_sale_frequency, customer_order_count, country, price, quantity)
+        predicted_revenue = predict_revenue(model, month, is_weekend,product_sale_frequency, customer_order_count, country, price)
         st.sidebar.success(f'Ventas {predicted_revenue:.2f}')
         print(f'Predicted Revenue: {predicted_revenue:.2f}')
 
